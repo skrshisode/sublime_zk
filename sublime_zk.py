@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
                   ___.   .__  .__                            __
         ________ _\_ |__ |  | |__| _____   ____      _______|  | __
@@ -25,7 +26,6 @@ from collections import Counter
 from operator import itemgetter
 import base64
 import urllib.request
-
 
 class ZkConstants:
     """
@@ -578,13 +578,6 @@ class Autobib:
         return ''.join(chars)
 
     @staticmethod
-    def dedupe(seq):
-        """
-        Deduplicates input sequence
-        """
-        return list(dict.fromkeys(seq))
-
-    @staticmethod
     def find_citations(text, citekeys):
         """
         Find all mentioned citekeys in text
@@ -601,7 +594,8 @@ class Autobib:
             if citekey.startswith('[#'):
                 citekey = citekey[1:]
             founds.append(citekey[:-1])   # don't add stop char
-        return Autobib.dedupe(founds)
+        founds = set(founds)
+        return founds
 
     @staticmethod
     def create_bibliography(text, bibfile, pandoc='pandoc'):
@@ -613,21 +607,24 @@ class Autobib:
             return {}
         citekeys = Autobib.find_citations(text, citekeys)
         citekey2bib = {}
-        pandoc_out = Autobib.run(pandoc, bibfile)
-        pdsplit = pandoc_out.split('\n\n')
-        for x in range(len(citekeys)):
-            citekey = citekeys[x]
-            citekey2bib[citekey] = pdsplit[x]
+        for citekey in citekeys:
+            pandoc_input = citekey.replace('#', '@', 1)
+            pandoc_out = Autobib.run(pandoc, bibfile, pandoc_input)
+            citekey2bib[citekey] = pandoc_out
         return citekey2bib
 
     @staticmethod
-    def run(pandoc_bin, bibfile):
-        args = [pandoc_bin, '-t', 'plain', '--citeproc', bibfile]
+    def run(pandoc_bin, bibfile, stdin):
+        args1 = [pandoc_bin, '-t', 'csljson', '--citeproc', bibfile]
+        args2 = ['jq', 'map(select(.id | contains("' + stdin.replace('@','') + '")))']
+        args3 = [pandoc_bin, '-f', 'csljson', '--citeproc', '-t', 'plain']
         # using universal_newlines here gets us into decoding troubles as the
         # encoding then is guessed and can be ascii which can't deal with
         # unicode characters. hence, we handle \r ourselves
-        p = Popen(args, stdin=PIPE, stdout=PIPE, stderr=PIPE)
-        stdout, stderr = p.communicate()
+        p1 = Popen(args1, stdin=PIPE, stdout=PIPE, stderr=PIPE)
+        p2 = Popen(args2, stdin=p1.stdout, stdout=PIPE, stderr=PIPE)
+        p3 = Popen(args3, stdin=p2.stdout, stdout=PIPE, stderr=PIPE)
+        stdout, stderr = p3.communicate()
         # make me windows-safe
         stdout = stdout.decode('utf-8', errors='ignore').replace('\r', '')
         stderr = stderr.decode('utf-8', errors='ignore').replace('\r', '')
@@ -2080,7 +2077,7 @@ class ZkAutoBibCommand(sublime_plugin.TextCommand):
             bib_lines = [marker_line + '\n']
             for citekey in sorted(ck2bib):
                 bib = ck2bib[citekey]
-                line = '[{}]: {}\n'.format(citekey, bib)
+                line = '[{}]: {}'.format(citekey, bib)
                 bib_lines.append(line)
             if not mmd_style:
                 bib_lines.append('-->')
